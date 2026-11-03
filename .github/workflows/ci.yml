@@ -9,9 +9,9 @@ on:
 permissions:
   contents: read
 
-# Validation only. The circuit installs Proxmox's kernel and reboots into
-# it, which the containers other circuits test in can't do. It's tested by
-# hand on Debian 13 hosts; see "Tested on" in the README.
+# The circuit installs Proxmox's kernel and reboots into it, which the
+# containers other circuits test in can't do, so e2e applies it to a Debian
+# 13 VM under KVM instead: examples/local starts one.
 jobs:
   validate:
     runs-on: ubuntu-24.04
@@ -20,9 +20,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Conn3x
-        env:
+        env: &gh
           GH_TOKEN: ${{ github.token }}
-        run: |
+        run: &install |
           tag=$(gh release view -R conn3xorg/conn3x --json tagName -q .tagName)
           file="conn3x_${tag#v}_linux_amd64.tar.gz"
           cd "$RUNNER_TEMP"
@@ -37,6 +37,85 @@ jobs:
         run: conn3x init -backend=false && conn3x validate
       - name: Validate the examples
         run: |
-          for dir in examples/single-node examples/lxc; do
+          for dir in examples/single-node examples/lxc examples/local; do
             (cd "$dir" && conn3x init -backend=false && conn3x validate)
           done
+
+  e2e:
+    needs: validate
+    runs-on: ubuntu-24.04
+    name: e2e (debian13)
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Conn3x
+        env: *gh
+        run: *install
+      # Hosted Ubuntu runners have KVM, but /dev/kvm isn't open to the
+      # runner user until a udev rule says so.
+      - name: Install QEMU and open up KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils
+      - name: Start the Debian 13 VM
+        working-directory: examples/local
+        run: ./up.sh
+      - name: Apply, then plan again with no changes
+        working-directory: examples/local
+        run: |
+          conn3x init
+          conn3x apply -auto-approve
+          conn3x plan -detailed-exitcode
+      # An API token made on the node, used from the runner through the
+      # forwarded port, the way a client or the bpg/proxmox provider would.
+      - name: Make an API token
+        working-directory: examples/local
+        run: |
+          secret=$(ssh -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 \
+            "pveum user token add root@pam ci --privsep 0 --output-format json" | jq -r .value)
+          echo "::add-mask::$secret"
+          echo "PVE_TOKEN=root@pam!ci=$secret" >> "$GITHUB_ENV"
+      - name: Use the API
+        run: &use |
+          api() { curl -ksSf --retry 30 --retry-all-errors --retry-delay 2 -H "Authorization: PVEAPIToken=$PVE_TOKEN" "https://127.0.0.1:8006/api2/json$1"; }
+          api /version | jq -e '.data.release | startswith("9.")'
+          # pvestatd reports the node a few seconds after boot.
+          for i in $(seq 30); do
+            api /nodes | jq -e '.data[] | select(.node == "pve1") | .status == "online"' >/dev/null && break
+            [ "$i" -lt 30 ] || { echo "pve1 never showed as online." >&2; exit 1; }
+            sleep 2
+          done
+          api /nodes/pve1/status | jq -e '.data.kversion | test("-pve")'
+          curl -ksSf -o /dev/null https://127.0.0.1:8006/
+      - name: Reboot
+        working-directory: examples/local
+        run: |
+          ssh -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 'systemctl reboot' || true
+          sleep 10
+          for i in $(seq 100); do
+            ssh -q -o ConnectTimeout=5 -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 true && break
+            [ "$i" -lt 100 ] || { echo "The VM didn't come back after the reboot." >&2; exit 1; }
+            sleep 3
+          done
+      # The API first: it waits for pveproxy and pvestatd, which a plan
+      # straight after boot would otherwise catch still starting.
+      - name: Use the API after the reboot
+        run: *use
+      - name: Plan again after the reboot, with no changes
+        working-directory: examples/local
+        run: conn3x plan -detailed-exitcode
+      - name: Show the VM's console and Proxmox's log
+        if: failure()
+        working-directory: examples/local
+        run: |
+          tail -n 100 serial.log || true
+          ssh -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 'journalctl -b --no-pager -u pveproxy -u pvedaemon -u pve-cluster -u pvestatd | tail -n 100' || true
+      - name: Clean up
+        if: always()
+        working-directory: examples/local
+        run: ./down.sh

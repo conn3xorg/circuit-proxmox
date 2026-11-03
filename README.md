@@ -115,7 +115,9 @@ Requires Conn3x v0.6.5 or later, and on each host x86_64 Debian 13 with root acc
 
 ## Tested on
 
-Debian 13 only, by hand, on two DigitalOcean droplets with 2 CPUs and 4 GB of memory. CI only validates the configuration: this circuit installs a kernel and reboots into it, and the containers the other circuits test in share the runner's kernel and can't reboot.
+Debian 13 only. This circuit installs a kernel and reboots into it, which the containers the other circuits test in can't do, so CI applies [examples/local](examples/local) to a Debian 13 VM under KVM on amd64 instead, with 2 CPUs and 4 GB of memory. It checks that the second plan has no changes, makes an API token on the node and uses it through the forwarded port to read the version, see the node online and confirm it runs a `-pve` kernel, and fetches the web interface. Then it reboots the VM and runs the same checks and the plan again.
+
+It was also applied by hand to two DigitalOcean droplets with 2 CPUs and 4 GB of memory.
 
 On each fresh droplet a single apply installed Proxmox VE 9.2 (`pveversion` printed `pve-manager/9.2.24`), `uname -r` ended in `-pve`, `pveproxy` was active, `https://127.0.0.1:8006` answered 200 on the host (and, on the first droplet, from outside), and the node showed as online in `pvesh get /nodes`. The second plan had no changes. After a reboot the same checks passed and the plan still had no changes. One droplet used the defaults, the other `domain` and a `hostname` different from the key, where `hostname --fqdn` and `hostname --ip-address` gave the full name and the public address. On both, `apt-get update` ran without errors, Debian's kernel and `os-prober` were gone, and postfix listened on loopback only.
 

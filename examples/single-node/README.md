@@ -1,6 +1,6 @@
 # Single-node example
 
-Turns one Debian 13 host into a Proxmox VE node called `pve1`. You need Conn3x and an x86_64 Debian 13 server you can log in to as root with an SSH key, such as a cloud VM with 4 GB of memory. There's no container version of this example: the circuit installs a kernel and reboots into it, which a container can't do.
+Turns one Debian 13 host into a Proxmox VE node called `pve1`. You need Conn3x and an x86_64 Debian 13 server you can log in to as root with an SSH key, such as a cloud VM with 4 GB of memory. To try it on your own machine instead, [examples/local](../local) runs the same thing in a throwaway VM.
 
 ```sh
 conn3x init
