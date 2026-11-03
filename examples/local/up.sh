@@ -9,8 +9,12 @@ set -eu
 cd "$(dirname "$0")"
 port=${PORT:-2222}
 web_port=${WEB_PORT:-8006}
-url=https://cloud.debian.org/images/cloud/trixie/latest
-image=debian-13-genericcloud-amd64.qcow2
+# One dated Debian build, checked against its SHA-512 from Debian's
+# SHA512SUMS, kept here so moving to a newer build is a reviewed change.
+build=20261026-2643
+url=https://cloud.debian.org/images/cloud/trixie/$build
+image=debian-13-genericcloud-amd64-$build.qcow2
+sha512=3ace18e33bdd036edb49d1f79342bd01d2ab980e35194edb0b410435cd543538d286a0bd13bbb0835f7862306e3d385ce2f6a70d8ecf0bd961111166adbc1b8e
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/circuit-proxmox
 mkdir -p "$cache"
 
@@ -19,11 +23,9 @@ if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
   exit 1
 fi
 
-# The image is checked against the checksums Debian publishes beside it.
-curl -fsSL -o "$cache/SHA512SUMS" "$url/SHA512SUMS"
-if ! (cd "$cache" && grep " $image\$" SHA512SUMS | sha512sum -c --status - 2>/dev/null); then
+if ! (cd "$cache" && echo "$sha512  $image" | sha512sum -c --status - 2>/dev/null); then
   curl -fsSL -o "$cache/$image" "$url/$image"
-  (cd "$cache" && grep " $image\$" SHA512SUMS | sha512sum -c --quiet -)
+  (cd "$cache" && echo "$sha512  $image" | sha512sum -c --quiet -) || { rm -f "$cache/$image"; exit 1; }
 fi
 
 [ -f id_ed25519 ] || ssh-keygen -q -t ed25519 -N '' -C circuit-proxmox -f id_ed25519
