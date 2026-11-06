@@ -66,8 +66,9 @@ On each host, in order:
 5. Installs `proxmox-default-kernel`, then reboots into it and waits for the host to come back. On a BIOS host it first tells the `grub-pc` package which disk to install to, the one holding `/boot`; cloud images boot GRUB without that package, and its install stops to ask otherwise.
 6. Installs `proxmox-ve`, `postfix`, `open-iscsi` and `chrony`. postfix is set up as `Local only`, so it listens on loopback and nothing else. chrony replaces `systemd-timesyncd`, as Proxmox recommends.
 7. Removes Debian's kernel, every installed `linux-image-*` package, and runs `update-grub`. It checks first that the host is running a Proxmox kernel, and fails rather than remove the one it's running.
-8. Removes `os-prober`, which would otherwise add your guests' disks to the boot menu.
-9. Makes sure `pveproxy` runs and is enabled, and waits for port 8006.
+8. Adds `source /etc/network/interfaces.d/*` to the end of `/etc/network/interfaces` when it isn't there, and leaves the rest of the file alone. Proxmox's SDN writes its zones and VNets to `/etc/network/interfaces.d/sdn`, so without that line, which a Debian cloud image's file lacks and the ISO's has, the VNets are created and never come up. It also starts the `networking` service that comes with `ifupdown2`, which otherwise wouldn't run until the next boot, so applying a network change from the web interface works straight away.
+9. Removes `os-prober`, which would otherwise add your guests' disks to the boot menu.
+10. Makes sure `pveproxy` runs and is enabled, and waits for port 8006.
 
 The reboot happens once, the first time the circuit is applied to a host. It doesn't happen again on later applies. A host that already runs Proxmox VE still reboots that first time.
 
@@ -81,7 +82,7 @@ Changing `repository` runs `apt-get full-upgrade` again.
 
 ### What it doesn't do
 
-- It doesn't touch the network configuration. Proxmox's guide has you create a Linux bridge, `vmbr0`, to put guests on your network, and that means moving the host's own address from its network interface to the bridge. Doing that over the SSH connection that's configuring it can cut the host off, so it's left to you. Use **System > Network** in the web interface, which checks and applies the change in one go, or follow [Default configuration using a bridge](https://pve.proxmox.com/wiki/Network_Configuration#_default_configuration_using_a_bridge). A container without a network, like the one in [examples/lxc](examples/lxc), works without it.
+- Beyond that one `source` line, it doesn't touch the network configuration. Proxmox's guide has you create a Linux bridge, `vmbr0`, to put guests on your network, and that means moving the host's own address from its network interface to the bridge. Doing that over the SSH connection that's configuring it can cut the host off, so it's left to you. Use **System > Network** in the web interface, which checks and applies the change in one go, or follow [Default configuration using a bridge](https://pve.proxmox.com/wiki/Network_Configuration#_default_configuration_using_a_bridge). A container without a network, like the one in [examples/lxc](examples/lxc), works without it.
 - It doesn't hide the "No valid subscription" message the web interface shows on login. That takes patching Proxmox's JavaScript, which an update puts back.
 - It doesn't set a root password. You log in to the web interface with root's existing password, so set one with `passwd` if your host only takes SSH keys.
 - It doesn't create clusters, storage, users or guests. Use the web interface, `pvecm`, or the bpg/proxmox provider, as in [examples/lxc](examples/lxc).
@@ -115,7 +116,7 @@ Requires Conn3x v0.6.5 or later, and on each host x86_64 Debian 13 with root acc
 
 ## Tested on
 
-Debian 13 only. This circuit installs a kernel and reboots into it, which the containers the other circuits test in can't do, so CI applies [examples/local](examples/local) to a Debian 13 VM under KVM on amd64 instead, with 2 CPUs and 4 GB of memory. It checks that the second plan has no changes, makes an API token on the node and uses it through the forwarded port to read the version, see the node online and confirm it runs a `-pve` kernel, and fetches the web interface. Then it reboots the VM and runs the same checks and the plan again.
+Debian 13 only. This circuit installs a kernel and reboots into it, which the containers the other circuits test in can't do, so CI applies [examples/local](examples/local) to a Debian 13 VM under KVM on amd64 instead, with 2 CPUs and 4 GB of memory. It applies the previous release first, v0.1.1, then this one over it, and checks that the second plan has no changes. It makes an API token on the node and uses it through the forwarded port to read the version, see the node online and confirm it runs a `-pve` kernel, and fetches the web interface. It creates a simple SDN zone and a VNet with a subnet, applies SDN, runs `ifreload -a` and checks that the VNet's bridge is up with the subnet's gateway address. Then it reboots the VM, checks the bridge came back, and runs the same checks and the plan again.
 
 It was also applied by hand to two DigitalOcean droplets with 2 CPUs and 4 GB of memory.
 

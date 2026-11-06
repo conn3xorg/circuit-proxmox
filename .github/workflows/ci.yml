@@ -65,9 +65,18 @@ jobs:
       - name: Start the Debian 13 VM
         working-directory: examples/local
         run: ./up.sh
-      - name: Apply, then plan again with no changes
+      # Install with the last release first, then apply this checkout over
+      # it, as anyone moving to a new release does.
+      - name: Apply the previous release, v0.1.1
         working-directory: examples/local
         run: |
+          sed -i 's|source = "../.."|source = "github.com/conn3xorg/circuit-proxmox?ref=v0.1.1"|' main.tf
+          conn3x init
+          conn3x apply -auto-approve
+      - name: Upgrade to this checkout, apply, then plan again with no changes
+        working-directory: examples/local
+        run: |
+          git checkout -- main.tf
           conn3x init
           conn3x apply -auto-approve
           conn3x plan -detailed-exitcode
@@ -92,6 +101,26 @@ jobs:
           done
           api /nodes/pve1/status | jq -e '.data.kversion | test("-pve")'
           curl -ksSf -o /dev/null https://127.0.0.1:8006/
+      # SDN writes the VNet to /etc/network/interfaces.d/sdn. Its bridge only
+      # comes up if /etc/network/interfaces sources that directory and
+      # ifreload works, which on a cloud image the circuit has to arrange.
+      - name: Create an SDN zone and VNet, and see its bridge come up
+        working-directory: examples/local
+        run: |
+          ssh -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 sh -eu <<'EOF'
+          pvesh create /cluster/sdn/zones --zone ci --type simple
+          pvesh create /cluster/sdn/vnets --vnet civnet --zone ci
+          pvesh create /cluster/sdn/vnets/civnet/subnets --subnet 10.99.0.0/24 --type subnet --gateway 10.99.0.1
+          pvesh set /cluster/sdn
+          # The apply reloads the network in a task of its own, so ifreload
+          # is retried until that task lets go.
+          for i in $(seq 30); do
+            grep -qs civnet /etc/network/interfaces.d/sdn && ifreload -a && ip -4 -o addr show dev civnet | grep -q ' 10\.99\.0\.1/24 ' && break
+            [ "$i" -lt 30 ] || { echo "The VNet's bridge civnet never came up with 10.99.0.1." >&2; exit 1; }
+            sleep 2
+          done
+          ip -o link show civnet | grep -q '[<,]UP[,>]'
+          EOF
       - name: Reboot
         working-directory: examples/local
         run: |
@@ -106,6 +135,11 @@ jobs:
       # straight after boot would otherwise catch still starting.
       - name: Use the API after the reboot
         run: *use
+      - name: See the VNet's bridge come up again after the reboot
+        working-directory: examples/local
+        run: |
+          ssh -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 \
+            "ip -4 -o addr show dev civnet | grep -q ' 10\.99\.0\.1/24 '"
       - name: Plan again after the reboot, with no changes
         working-directory: examples/local
         run: conn3x plan -detailed-exitcode
@@ -114,7 +148,7 @@ jobs:
         working-directory: examples/local
         run: |
           tail -n 100 serial.log || true
-          ssh -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 'journalctl -b --no-pager -u pveproxy -u pvedaemon -u pve-cluster -u pvestatd | tail -n 100' || true
+          ssh -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 'journalctl -b --no-pager -u pveproxy -u pvedaemon -u pve-cluster -u pvestatd -u networking | tail -n 100; cat /etc/network/interfaces /etc/network/interfaces.d/sdn; ip -br addr' || true
       - name: Clean up
         if: always()
         working-directory: examples/local
