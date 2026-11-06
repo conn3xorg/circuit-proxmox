@@ -189,10 +189,17 @@ circuit "proxmox" {
   # SDN writes its zones and VNets to /etc/network/interfaces.d/sdn, which
   # ifupdown2 reads only when /etc/network/interfaces sources it. The ISO's
   # file does. A Debian cloud image's doesn't, so the VNets never come up.
+  # The install leaves a pending interfaces.new that Proxmox moves over the
+  # file on the next network reload, so the line goes in that too.
   step "source_interfaces_d" {
-    line {
-      path = "/etc/network/interfaces"
-      line = "source /etc/network/interfaces.d/*"
+    command {
+      command = <<-EOT
+        for f in /etc/network/interfaces /etc/network/interfaces.new; do
+          [ -f "$f" ] || continue
+          grep -qxF 'source /etc/network/interfaces.d/*' "$f" || printf '\nsource /etc/network/interfaces.d/*\n' >> "$f"
+        done
+      EOT
+      unless  = "for f in /etc/network/interfaces /etc/network/interfaces.new; do [ ! -f \"$f\" ] || grep -qxF 'source /etc/network/interfaces.d/*' \"$f\" || exit 1; done"
     }
   }
 

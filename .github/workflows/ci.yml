@@ -148,7 +148,7 @@ jobs:
         working-directory: examples/local
         run: |
           tail -n 100 serial.log || true
-          ssh -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 'journalctl -b --no-pager -u pveproxy -u pvedaemon -u pve-cluster -u pvestatd -u networking | tail -n 100; cat /etc/network/interfaces /etc/network/interfaces.d/sdn; ip -br addr' || true
+          ssh -o UserKnownHostsFile=known_hosts -i id_ed25519 -p 2222 root@127.0.0.1 'journalctl -b --no-pager -u pveproxy -u pvedaemon -u pve-cluster -u pvestatd -u networking | tail -n 100; ls -la /etc/network; cat /etc/network/interfaces /etc/network/interfaces.d/sdn; ip -br addr' || true
       - name: Clean up
         if: always()
         working-directory: examples/local
