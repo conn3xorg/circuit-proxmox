@@ -10,7 +10,7 @@ Doing it by hand is an afternoon of copying commands out of the wiki and answeri
 
 ```hcl
 module "proxmox" {
-  source = "github.com/conn3xorg/circuit-proxmox?ref=v0.1.1"
+  source = "github.com/conn3xorg/circuit-proxmox?ref=v0.1.2"
 
   hosts                = { pve1 = "203.0.113.10" }
   ssh_private_key_file = "~/.ssh/id_ed25519"
